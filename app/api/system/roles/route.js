@@ -1,9 +1,7 @@
-// path: app/api/system/roles/route.js
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { validateRolePayload } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
 
@@ -13,29 +11,32 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Include a live user count per role — needed by the UI to explain why delete is blocked
-  const { data: roles, error } = await supabaseAdmin
-    .from("roles")
-    .select("*")
-    .order("name");
-  if (error)
+  try {
+    const roles = await prisma.role.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        _count: {
+          select: {
+            users: {
+              where: { deleted_at: null },
+            },
+          },
+        },
+      },
+    });
+
+    const enriched = roles.map((r) => {
+      const { _count, ...roleData } = r;
+      return {
+        ...roleData,
+        user_count: _count.users,
+      };
+    });
+
+    return NextResponse.json({ roles: enriched });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-
-  const { data: counts } = await supabaseAdmin
-    .from("users")
-    .select("role_id")
-    .is("deleted_at", null);
-
-  const countMap = {};
-  (counts || []).forEach((u) => {
-    countMap[u.role_id] = (countMap[u.role_id] || 0) + 1;
-  });
-
-  const enriched = roles.map((r) => ({
-    ...r,
-    user_count: countMap[r.id] || 0,
-  }));
-  return NextResponse.json({ roles: enriched });
+  }
 }
 
 export async function POST(req) {
@@ -46,37 +47,41 @@ export async function POST(req) {
 
   const body = await req.json();
   const { valid, errors } = validateRolePayload(body);
-  if (!valid)
+  if (!valid) {
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+  }
 
-  const { data: existing } = await supabaseAdmin
-    .from("roles")
-    .select("id")
-    .eq("name", body.name)
-    .maybeSingle();
-  if (existing)
-    return NextResponse.json(
-      { error: "A role with this name already exists." },
-      { status: 409 },
-    );
+  try {
+    const existing = await prisma.role.findFirst({
+      where: { name: body.name },
+      select: { id: true },
+    });
 
-  const { data, error } = await supabaseAdmin
-    .from("roles")
-    .insert({ name: body.name, description: body.description || null })
-    .select()
-    .single();
+    if (existing) {
+      return NextResponse.json(
+        { error: "A role with this name already exists." },
+        { status: 409 },
+      );
+    }
 
-  if (error)
+    const data = await prisma.role.create({
+      data: {
+        name: body.name,
+        description: body.description || null,
+      },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorEmail: session.user.email,
+      action: "role.create",
+      entityType: "role",
+      entityId: data.id,
+      afterData: data,
+    });
+
+    return NextResponse.json({ role: data });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-
-  await logAudit({
-    actorId: session.user.id,
-    actorEmail: session.user.email,
-    action: "role.create",
-    entityType: "role",
-    entityId: data.id,
-    afterData: data,
-  });
-
-  return NextResponse.json({ role: data });
+  }
 }

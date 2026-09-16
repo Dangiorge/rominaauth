@@ -1,9 +1,7 @@
-// path: app/api/system/audit-logs/route.js
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(req) {
   const session = await getServerSession(authOptions);
@@ -17,18 +15,24 @@ export async function GET(req) {
   const entityType = searchParams.get("entityType");
   const actorEmail = searchParams.get("actorEmail");
 
-  let query = supabaseAdmin
-    .from("audit_logs")
-    .select("*", { count: "exact" })
-    .order("created_at", { ascending: false })
-    .range((page - 1) * pageSize, page * pageSize - 1);
+  const where = {};
+  if (entityType) where.entity_type = entityType;
+  if (actorEmail)
+    where.actor_email = { contains: actorEmail, mode: "insensitive" };
 
-  if (entityType) query = query.eq("entity_type", entityType);
-  if (actorEmail) query = query.ilike("actor_email", `%${actorEmail}%`);
+  try {
+    const [data, count] = await prisma.$transaction([
+      prisma.auditLog.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
 
-  const { data, error, count } = await query;
-  if (error)
+    return NextResponse.json({ logs: data, total: count, page, pageSize });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-
-  return NextResponse.json({ logs: data, total: count, page, pageSize });
+  }
 }

@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { createAuthToken } from "@/lib/tokens";
 import { sendVerificationEmail } from "@/lib/email";
 
@@ -12,12 +12,7 @@ export async function POST() {
   if (!session)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: user } = await supabaseAdmin
-    .from("users")
-    .select("id, email, full_name, email_verified_at")
-    .eq("id", session.user.id)
-    .single();
-
+  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
   if (!user)
     return NextResponse.json({ error: "User not found." }, { status: 404 });
   if (user.email_verified_at)

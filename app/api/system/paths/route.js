@@ -1,9 +1,7 @@
-// path: app/api/system/paths/route.js
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { validatePathPayload } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
 
@@ -13,15 +11,14 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("registered_paths")
-    .select("*")
-    .order("category", { ascending: true })
-    .order("label", { ascending: true });
-
-  if (error)
+  try {
+    const paths = await prisma.registeredPath.findMany({
+      orderBy: [{ category: "asc" }, { label: "asc" }],
+    });
+    return NextResponse.json({ paths });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ paths: data });
+  }
 }
 
 export async function POST(req) {
@@ -35,43 +32,43 @@ export async function POST(req) {
   if (!valid)
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
-  const { data: existing } = await supabaseAdmin
-    .from("registered_paths")
-    .select("id")
-    .eq("path", body.path)
-    .maybeSingle();
-  if (existing)
-    return NextResponse.json(
-      { error: "This path is already registered." },
-      { status: 409 },
-    );
+  try {
+    const existing = await prisma.registeredPath.findFirst({
+      where: { path: body.path },
+      select: { id: true },
+    });
 
-  const { data, error } = await supabaseAdmin
-    .from("registered_paths")
-    .insert({
-      path: body.path,
-      label: body.label,
-      icon: body.icon || null,
-      category: body.category || null,
-      module: body.module || null,
-      parent_id: body.parent_id || null,
-      is_sidebar_visible: body.is_sidebar_visible ?? true,
-      is_active: true,
-    })
-    .select()
-    .single();
+    if (existing) {
+      return NextResponse.json(
+        { error: "This path is already registered." },
+        { status: 409 },
+      );
+    }
 
-  if (error)
+    const data = await prisma.registeredPath.create({
+      data: {
+        path: body.path,
+        label: body.label,
+        icon: body.icon || null,
+        category: body.category || null,
+        module: body.module || null,
+        parent_id: body.parent_id || null,
+        is_sidebar_visible: body.is_sidebar_visible ?? true,
+        is_active: true,
+      },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorEmail: session.user.email,
+      action: "path.create",
+      entityType: "path",
+      entityId: data.id,
+      afterData: data,
+    });
+
+    return NextResponse.json({ path: data });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-
-  await logAudit({
-    actorId: session.user.id,
-    actorEmail: session.user.email,
-    action: "path.create",
-    entityType: "path",
-    entityId: data.id,
-    afterData: data,
-  });
-
-  return NextResponse.json({ path: data });
+  }
 }

@@ -3,7 +3,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { validatePassword } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
 import bcrypt from "bcryptjs";
@@ -20,17 +20,14 @@ export async function POST(req) {
 
   const password_hash = await bcrypt.hash(newPassword, 10);
 
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update({
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: {
       password_hash,
       must_change_password: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", session.user.id);
-
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      updated_at: new Date(),
+    },
+  });
 
   await logAudit({
     actorId: session.user.id,
@@ -39,6 +36,5 @@ export async function POST(req) {
     entityType: "user",
     entityId: session.user.id,
   });
-
   return NextResponse.json({ success: true });
 }

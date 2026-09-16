@@ -1,0 +1,478 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS (mirrors the CHECK constraints from your original SQL)
+// ============================================================
+
+enum CategoryLevel {
+  segment
+  category
+  subcategory
+}
+
+enum ItemType {
+  finished_product
+  service
+  semi_processed
+  ingredient
+  packaging
+  asset
+  expense
+}
+
+enum ItemStatus {
+  active
+  inactive
+  discontinued
+}
+
+// ============================================================
+// AUTH & USER MANAGEMENT
+// ============================================================
+
+model User {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                 String    @unique
+  password_hash         String
+  full_name             String?
+  phone                 String?
+  employee_id           String?   @unique
+  address               String?
+  city                  String?
+  country               String?
+  date_of_birth         DateTime? @db.Date
+  gender                String?
+  department            String?   // legacy free-text field, superseded by department_id
+  job_title             String?
+  hire_date             DateTime? @db.Date
+  avatar_url            String?
+  status                String    @default("active")
+  is_active             Boolean   @default(true)
+  must_change_password  Boolean   @default(false)
+  failed_login_attempts Int       @default(0)
+  locked_until          DateTime? @db.Timestamptz(6)
+  last_login_at         DateTime? @db.Timestamptz(6)
+  last_login_ip         String?
+  email_verified_at     DateTime? @db.Timestamptz(6)
+  role_id               Int?
+  role                  Role?     @relation(fields: [role_id], references: [id])
+  department_id         Int?
+  department_ref        Department? @relation(fields: [department_id], references: [id])
+  created_by            String?   @db.Uuid
+  updated_by            String?   @db.Uuid
+  creator               User?     @relation("UserCreatedBy", fields: [created_by], references: [id])
+  createdUsers          User[]    @relation("UserCreatedBy")
+  updater               User?     @relation("UserUpdatedBy", fields: [updated_by], references: [id])
+  updatedUsers          User[]    @relation("UserUpdatedBy")
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+  deleted_at            DateTime? @db.Timestamptz(6)
+
+  auditLogs             AuditLog[]
+  authTokens            AuthToken[]
+  userCompanies         UserCompany[]
+  userBrands            UserBrand[]
+  userBranches          UserBranch[]
+
+  createdItemCategories ItemCategory[] @relation("ItemCategoryCreatedBy")
+  updatedItemCategories ItemCategory[] @relation("ItemCategoryUpdatedBy")
+  createdTaxClasses     TaxClass[]     @relation("TaxClassCreatedBy")
+  updatedTaxClasses     TaxClass[]     @relation("TaxClassUpdatedBy")
+  createdMasterItems    MasterItem[]   @relation("MasterItemCreatedBy")
+  updatedMasterItems    MasterItem[]   @relation("MasterItemUpdatedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  description     String?
+  is_system       Boolean          @default(false)
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime         @default(now()) @db.Timestamptz(6)
+
+  users           User[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model RegisteredPath {
+  id                 Int              @id @default(autoincrement())
+  path               String           @unique
+  label              String
+  icon               String?
+  category           String?
+  module             String?
+  parent_id          Int?
+  parent             RegisteredPath?  @relation("PathHierarchy", fields: [parent_id], references: [id])
+  children           RegisteredPath[] @relation("PathHierarchy")
+  is_sidebar_visible Boolean          @default(true)
+  is_active          Boolean          @default(true)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime         @default(now()) @db.Timestamptz(6)
+
+  rolePermissions    RolePermission[]
+
+  @@map("registered_paths")
+}
+
+model RolePermission {
+  id            Int             @id @default(autoincrement())
+  role_id       Int
+  role          Role            @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  path_id       Int
+  path          RegisteredPath  @relation(fields: [path_id], references: [id], onDelete: Cascade)
+  can_view      Boolean         @default(false)
+  can_create    Boolean         @default(false)
+  can_edit      Boolean         @default(false)
+  can_delete    Boolean         @default(false)
+  custom_flags  Json            @default("{}")
+
+  @@unique([role_id, path_id])
+  @@map("role_permissions")
+}
+
+model AuditLog {
+  id          BigInt    @id @default(autoincrement())
+  actor_id    String?   @db.Uuid
+  actor       User?     @relation(fields: [actor_id], references: [id])
+  actor_email String?
+  action      String
+  entity_type String
+  entity_id   String?
+  before_data Json?
+  after_data  Json?
+  ip_address  String?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("audit_logs")
+}
+
+model AuthToken {
+  id         BigInt    @id @default(autoincrement())
+  user_id    String    @db.Uuid
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  token      String    @unique
+  type       String
+  expires_at DateTime  @db.Timestamptz(6)
+  used_at    DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("auth_tokens")
+}
+
+model LoginAttempt {
+  id         BigInt    @id @default(autoincrement())
+  ip_address String
+  email      String?
+  success    Boolean
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("login_attempts")
+}
+
+// ============================================================
+// ORGANIZATIONAL HIERARCHY
+// ============================================================
+
+model Company {
+  id               Int         @id @default(autoincrement())
+  name             String
+  code             String      @unique
+  is_active        Boolean     @default(true)
+  email            String?
+  phone            String?
+  website          String?
+  tax_id           String?
+  address_line1    String?
+  address_line2    String?
+  city             String?
+  region           String?
+  country          String?
+  postal_code      String?
+  logo_url         String?
+  primary_color    String      @default("#0f172a")
+  secondary_color  String      @default("#64748b")
+  accent_color     String      @default("#3b82f6")
+  created_at       DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime    @default(now()) @db.Timestamptz(6)
+
+  brands           Brand[]
+  taxClasses       TaxClass[]
+  itemCategories   ItemCategory[]
+  masterItems      MasterItem[]
+  userCompanies    UserCompany[]
+
+  @@map("companies")
+}
+
+model Brand {
+  id                 Int       @id @default(autoincrement())
+  company_id         Int
+  company            Company   @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  name               String
+  slug               String    @unique
+  is_active          Boolean   @default(true)
+  email              String?
+  phone              String?
+  address_line1      String?
+  address_line2      String?
+  city               String?
+  region             String?
+  country            String?
+  postal_code        String?
+  logo_url           String?
+  primary_color      String?
+  secondary_color    String?
+  accent_color       String?
+  uses_custom_theme  Boolean   @default(false)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+
+  branches            Branch[]
+  userBrands          UserBrand[]
+  itemBrandVisibility ItemBrandVisibility[]
+
+  @@map("brands")
+}
+
+model Branch {
+  id            Int          @id @default(autoincrement())
+  brand_id      Int
+  brand         Brand        @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+  name          String
+  code          String       @unique
+  city          String?
+  is_active     Boolean      @default(true)
+  email         String?
+  phone         String?
+  address_line1 String?
+  address_line2 String?
+  region        String?
+  country       String?
+  postal_code   String?
+  manager_name  String?
+  latitude      Decimal?     @db.Decimal(10, 7)
+  longitude     Decimal?     @db.Decimal(10, 7)
+  created_at    DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime     @default(now()) @db.Timestamptz(6)
+
+  userBranches  UserBranch[]
+
+  @@map("branches")
+}
+
+model Department {
+  id         Int       @id @default(autoincrement())
+  name       String
+  code       String    @unique
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  users      User[]
+
+  @@map("departments")
+}
+
+model UserCompany {
+  user_id    String    @db.Uuid
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  company_id Int
+  company    Company   @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([user_id, company_id])
+  @@map("user_companies")
+}
+
+model UserBrand {
+  user_id    String    @db.Uuid
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  brand_id   Int
+  brand      Brand     @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([user_id, brand_id])
+  @@map("user_brands")
+}
+
+model UserBranch {
+  user_id    String    @db.Uuid
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  branch_id  Int
+  branch     Branch    @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  is_primary Boolean   @default(false)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([user_id, branch_id])
+  @@map("user_branches")
+}
+
+// ============================================================
+// ITEM MASTER: CONFIGURATION
+// ============================================================
+
+model ItemCategory {
+  id          Int            @id @default(autoincrement())
+  company_id  Int
+  company     Company        @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  name        String
+  code        String         @unique
+  level       CategoryLevel
+  parent_id   Int?
+  parent      ItemCategory?  @relation("CategoryHierarchy", fields: [parent_id], references: [id], onDelete: Cascade)
+  children    ItemCategory[] @relation("CategoryHierarchy")
+  is_active   Boolean        @default(true)
+  created_by  String?        @db.Uuid
+  creator     User?          @relation("ItemCategoryCreatedBy", fields: [created_by], references: [id])
+  updated_by  String?        @db.Uuid
+  updater     User?          @relation("ItemCategoryUpdatedBy", fields: [updated_by], references: [id])
+  created_at  DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime       @default(now()) @db.Timestamptz(6)
+  deleted_at  DateTime?      @db.Timestamptz(6)
+
+  masterItems MasterItem[]
+
+  @@map("item_categories")
+}
+
+model UomClass {
+  id         Int       @id @default(autoincrement())
+  name       String    @unique
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  uoms       Uom[]
+
+  @@map("uom_classes")
+}
+
+model Uom {
+  id           Int       @id @default(autoincrement())
+  class_id     Int?
+  uomClass     UomClass? @relation(fields: [class_id], references: [id])
+  code         String    @unique
+  name         String
+  is_base_unit Boolean   @default(false)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+
+  conversionsFrom UomConversion[] @relation("ConversionFrom")
+  conversionsTo   UomConversion[] @relation("ConversionTo")
+  itemsBaseUom    MasterItem[]    @relation("ItemBaseUom")
+  itemsPurchaseUom MasterItem[]   @relation("ItemPurchaseUom")
+  itemsSalesUom   MasterItem[]    @relation("ItemSalesUom")
+
+  @@map("uoms")
+}
+
+model UomConversion {
+  id                Int       @id @default(autoincrement())
+  from_uom_id       Int?
+  fromUom           Uom?      @relation("ConversionFrom", fields: [from_uom_id], references: [id], onDelete: Cascade)
+  to_uom_id         Int?
+  toUom             Uom?      @relation("ConversionTo", fields: [to_uom_id], references: [id], onDelete: Cascade)
+  conversion_factor Decimal   @db.Decimal(16, 8)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([from_uom_id, to_uom_id])
+  @@map("uom_conversions")
+}
+
+model TaxClass {
+  id           Int          @id @default(autoincrement())
+  company_id   Int
+  company      Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  name         String
+  code         String       @unique
+  rate         Decimal      @default(0.00) @db.Decimal(5, 2)
+  is_inclusive Boolean      @default(false)
+  is_taxable   Boolean      @default(true)
+  is_active    Boolean      @default(true)
+  created_by   String?      @db.Uuid
+  creator      User?        @relation("TaxClassCreatedBy", fields: [created_by], references: [id])
+  updated_by   String?      @db.Uuid
+  updater      User?        @relation("TaxClassUpdatedBy", fields: [updated_by], references: [id])
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime     @default(now()) @db.Timestamptz(6)
+  deleted_at   DateTime?    @db.Timestamptz(6)
+
+  masterItems  MasterItem[]
+
+  @@map("tax_classes")
+}
+
+// ============================================================
+// ITEM MASTER: CATALOG
+// ============================================================
+
+model MasterItem {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id       Int
+  company          Company       @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  sku              String        @unique
+  barcode          String?       @unique
+  name             String
+  description      String?
+  image_url        String?
+
+  category_id      Int?
+  category         ItemCategory? @relation(fields: [category_id], references: [id])
+
+  item_type        ItemType
+
+  is_sellable      Boolean       @default(false)
+  is_inventory     Boolean       @default(true)
+  is_recipe_linked Boolean       @default(false)
+
+  base_uom_id      Int?
+  baseUom          Uom?          @relation("ItemBaseUom", fields: [base_uom_id], references: [id])
+  purchase_uom_id  Int?
+  purchaseUom      Uom?          @relation("ItemPurchaseUom", fields: [purchase_uom_id], references: [id])
+  sales_uom_id     Int?
+  salesUom         Uom?          @relation("ItemSalesUom", fields: [sales_uom_id], references: [id])
+
+  tax_class_id     Int?
+  taxClass         TaxClass?     @relation(fields: [tax_class_id], references: [id])
+
+  default_cost     Decimal       @default(0.00) @db.Decimal(12, 2)
+
+  is_batch_tracked Boolean       @default(false)
+  track_expiry     Boolean       @default(false)
+  shelf_life_days  Int?
+
+  asset_meta       Json          @default("{}")
+  expense_meta     Json          @default("{}")
+  export_meta      Json          @default("{}")
+
+  status           ItemStatus    @default(active)
+
+  created_by       String?       @db.Uuid
+  creator          User?         @relation("MasterItemCreatedBy", fields: [created_by], references: [id])
+  updated_by       String?       @db.Uuid
+  updater          User?         @relation("MasterItemUpdatedBy", fields: [updated_by], references: [id])
+  created_at       DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime      @default(now()) @db.Timestamptz(6)
+  deleted_at       DateTime?     @db.Timestamptz(6)
+
+  brandVisibility  ItemBrandVisibility[]
+
+  @@map("master_items")
+}
+
+model ItemBrandVisibility {
+  item_id    String      @db.Uuid
+  item       MasterItem  @relation(fields: [item_id], references: [id], onDelete: Cascade)
+  brand_id   Int
+  brand      Brand       @relation(fields: [brand_id], references: [id], onDelete: Cascade)
+  created_at DateTime    @default(now()) @db.Timestamptz(6)
+
+  @@id([item_id, brand_id])
+  @@map("item_brand_visibility")
+}

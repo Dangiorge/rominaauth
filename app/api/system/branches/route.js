@@ -1,9 +1,7 @@
-// path: app/api/system/branches/route.js (replace the whole file)
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
 export async function GET() {
@@ -11,13 +9,31 @@ export async function GET() {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const { data, error } = await supabaseAdmin
-    .from("branches")
-    .select("*, brands ( id, name, company_id, companies ( id, name ) )")
-    .order("name");
-  if (error)
+
+  try {
+    const data = await prisma.branch.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        brands: {
+          select: {
+            id: true,
+            name: true,
+            company_id: true,
+            companies: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ branches: data });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ branches: data });
+  }
 }
 
 export async function POST(req) {
@@ -25,6 +41,7 @@ export async function POST(req) {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
   const body = await req.json();
   if (!body.name || !body.code || !body.brand_id) {
     return NextResponse.json(
@@ -32,47 +49,50 @@ export async function POST(req) {
       { status: 400 },
     );
   }
-  const { data: existing } = await supabaseAdmin
-    .from("branches")
-    .select("id")
-    .eq("code", body.code)
-    .maybeSingle();
-  if (existing)
-    return NextResponse.json(
-      { error: "A branch with this code already exists." },
-      { status: 409 },
-    );
 
-  const { data, error } = await supabaseAdmin
-    .from("branches")
-    .insert({
-      name: body.name,
-      code: body.code,
-      city: body.city || null,
-      brand_id: body.brand_id,
-      email: body.email || null,
-      phone: body.phone || null,
-      address_line1: body.address_line1 || null,
-      address_line2: body.address_line2 || null,
-      region: body.region || null,
-      country: body.country || null,
-      postal_code: body.postal_code || null,
-      manager_name: body.manager_name || null,
-      latitude: body.latitude || null,
-      longitude: body.longitude || null,
-    })
-    .select()
-    .single();
+  try {
+    const existing = await prisma.branch.findFirst({
+      where: { code: body.code },
+      select: { id: true },
+    });
 
-  if (error)
+    if (existing) {
+      return NextResponse.json(
+        { error: "A branch with this code already exists." },
+        { status: 409 },
+      );
+    }
+
+    const data = await prisma.branch.create({
+      data: {
+        name: body.name,
+        code: body.code,
+        city: body.city || null,
+        brand_id: body.brand_id,
+        email: body.email || null,
+        phone: body.phone || null,
+        address_line1: body.address_line1 || null,
+        address_line2: body.address_line2 || null,
+        region: body.region || null,
+        country: body.country || null,
+        postal_code: body.postal_code || null,
+        manager_name: body.manager_name || null,
+        latitude: body.latitude || null,
+        longitude: body.longitude || null,
+      },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorEmail: session.user.email,
+      action: "branch.create",
+      entityType: "branch",
+      entityId: data.id,
+      afterData: data,
+    });
+
+    return NextResponse.json({ branch: data });
+  } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
-  await logAudit({
-    actorId: session.user.id,
-    actorEmail: session.user.email,
-    action: "branch.create",
-    entityType: "branch",
-    entityId: data.id,
-    afterData: data,
-  });
-  return NextResponse.json({ branch: data });
+  }
 }

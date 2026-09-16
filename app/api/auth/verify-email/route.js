@@ -1,7 +1,7 @@
 // path: app/api/auth/verify-email/route.js
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { consumeAuthToken } from "@/lib/tokens";
 
 export async function POST(req) {
@@ -16,12 +16,9 @@ export async function POST(req) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }
 
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update({ email_verified_at: new Date().toISOString() })
-    .eq("id", userId);
-
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  await prisma.user.update({
+    where: { id: userId },
+    data: { email_verified_at: new Date() },
+  });
   return NextResponse.json({ success: true });
 }

@@ -1,7 +1,7 @@
 // path: app/api/auth/forgot-password/route.js
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { createAuthToken } from "@/lib/tokens";
 import { sendPasswordResetEmail } from "@/lib/email";
 
@@ -10,14 +10,10 @@ export async function POST(req) {
   if (!email)
     return NextResponse.json({ error: "Email is required." }, { status: 400 });
 
-  const { data: user } = await supabaseAdmin
-    .from("users")
-    .select("id, email, full_name, is_active")
-    .eq("email", email)
-    .is("deleted_at", null)
-    .maybeSingle();
+  const user = await prisma.user.findFirst({
+    where: { email, deleted_at: null },
+  });
 
-  // Always return success regardless of whether the account exists — prevents email enumeration
   if (user && user.is_active) {
     const token = await createAuthToken(user.id, "password_reset", 30);
     await sendPasswordResetEmail(user.email, user.full_name, token);

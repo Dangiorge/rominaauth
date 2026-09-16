@@ -3,24 +3,34 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data, error } = await supabaseAdmin
-    .from("users")
-    .select(
-      "id, email, full_name, phone, address, city, country, date_of_birth, gender, job_title, department_id, email_verified_at, departments ( name )",
-    )
-    .eq("id", session.user.id)
-    .single();
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      email: true,
+      full_name: true,
+      phone: true,
+      address: true,
+      city: true,
+      country: true,
+      date_of_birth: true,
+      gender: true,
+      job_title: true,
+      department_id: true,
+      email_verified_at: true,
+      department_ref: { select: { name: true } },
+    },
+  });
 
-  if (error || !data)
-    return NextResponse.json({ error: "Not found." }, { status: 404 });
-  return NextResponse.json({ profile: data });
+  if (!user) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  return NextResponse.json({ profile: user });
 }
 
 export async function PUT(req) {
@@ -30,24 +40,22 @@ export async function PUT(req) {
 
   const body = await req.json();
 
-  // Self-service users can only edit personal fields — NOT role, email, or scopes
   const updatePayload = {
     ...("full_name" in body && { full_name: body.full_name }),
     ...("phone" in body && { phone: body.phone }),
     ...("address" in body && { address: body.address }),
     ...("city" in body && { city: body.city }),
     ...("country" in body && { country: body.country }),
-    ...("date_of_birth" in body && { date_of_birth: body.date_of_birth }),
+    ...("date_of_birth" in body && {
+      date_of_birth: body.date_of_birth ? new Date(body.date_of_birth) : null,
+    }),
     ...("gender" in body && { gender: body.gender }),
-    updated_at: new Date().toISOString(),
+    updated_at: new Date(),
   };
 
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update(updatePayload)
-    .eq("id", session.user.id);
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
-
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: updatePayload,
+  });
   return NextResponse.json({ success: true });
 }

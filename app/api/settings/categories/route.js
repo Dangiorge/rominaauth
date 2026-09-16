@@ -1,88 +1,95 @@
-// path: app/api/settings/categories/route.js
-
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
-import { validateCategoryPayload } from "@/lib/validation";
+import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
 export async function GET(req) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.roleName !== "super_admin") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const { searchParams } = new URL(req.url);
-  const companyId = searchParams.get("companyId");
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.roleName !== "super_admin") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  let query = supabaseAdmin
-    .from("item_categories")
-    .select("*")
-    .is("deleted_at", null)
-    .order("level")
-    .order("name");
-  if (companyId) query = query.eq("company_id", companyId);
+    const { searchParams } = new URL(req.url);
+    const rawCompanyId =
+      searchParams.get("companyId") || searchParams.get("company_id");
 
-  const { data, error } = await query;
-  if (error)
+    const where = { deleted_at: null };
+    if (rawCompanyId) {
+      where.company_id = parseInt(rawCompanyId, 10);
+    }
+
+    const categories = await prisma.itemCategory.findMany({
+      where,
+      orderBy: [{ level: "asc" }, { name: "asc" }],
+    });
+
+    return NextResponse.json({ categories }, { status: 200 });
+  } catch (error) {
+    console.error("GET /api/settings/categories error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ categories: data });
+  }
 }
 
 export async function POST(req) {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.roleName !== "super_admin") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const body = await req.json();
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.roleName !== "super_admin") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  let parentCategory = null;
-  if (body.parent_id) {
-    const { data } = await supabaseAdmin
-      .from("item_categories")
-      .select("*")
-      .eq("id", body.parent_id)
-      .single();
-    parentCategory = data;
-  }
+    const body = await req.json();
+    const { name, code, company_id, level, parent_id } = body;
 
-  const { valid, errors } = validateCategoryPayload(body, parentCategory);
-  if (!valid)
-    return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+    if (!name || !code || !company_id) {
+      return NextResponse.json(
+        { error: "Name, code, and company_id are required." },
+        { status: 400 },
+      );
+    }
 
-  const { data: existing } = await supabaseAdmin
-    .from("item_categories")
-    .select("id")
-    .eq("code", body.code)
-    .maybeSingle();
-  if (existing)
-    return NextResponse.json(
-      { error: "A category with this code already exists." },
-      { status: 409 },
-    );
+    const parsedCompanyId = parseInt(company_id, 10);
 
-  const { data, error } = await supabaseAdmin
-    .from("item_categories")
-    .insert({
-      company_id: body.company_id,
-      name: body.name,
-      code: body.code,
-      level: body.level,
-      parent_id: body.parent_id || null,
-      created_by: session.user.id,
-    })
-    .select()
-    .single();
+    const existing = await prisma.itemCategory.findFirst({
+      where: {
+        company_id: parsedCompanyId,
+        code: code.trim(),
+        deleted_at: null,
+      },
+      select: { id: true },
+    });
 
-  if (error)
+    if (existing) {
+      return NextResponse.json(
+        { error: "A category with this code already exists for this company." },
+        { status: 409 },
+      );
+    }
+
+    const data = await prisma.itemCategory.create({
+      data: {
+        company_id: parsedCompanyId,
+        name: name.trim(),
+        code: code.trim(),
+        level: level || 1,
+        parent_id: parent_id || null,
+        created_by: session.user.id,
+      },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorEmail: session.user.email,
+      action: "category.create",
+      entityType: "item_category",
+      entityId: data.id,
+      afterData: data,
+    });
+
+    return NextResponse.json({ category: data }, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/settings/categories error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
-  await logAudit({
-    actorId: session.user.id,
-    actorEmail: session.user.email,
-    action: "category.create",
-    entityType: "item_category",
-    entityId: data.id,
-    afterData: data,
-  });
-  return NextResponse.json({ category: data });
+  }
 }

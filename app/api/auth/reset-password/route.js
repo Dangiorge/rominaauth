@@ -1,7 +1,7 @@
 // path: app/api/auth/reset-password/route.js
 
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { consumeAuthToken } from "@/lib/tokens";
 import { validatePassword } from "@/lib/validation";
 import { logAudit } from "@/lib/audit";
@@ -28,19 +28,16 @@ export async function POST(req) {
 
   const password_hash = await bcrypt.hash(newPassword, 10);
 
-  const { error } = await supabaseAdmin
-    .from("users")
-    .update({
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
       password_hash,
       must_change_password: false,
       failed_login_attempts: 0,
       locked_until: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
-
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      updated_at: new Date(),
+    },
+  });
 
   await logAudit({
     actorId: userId,
@@ -48,6 +45,5 @@ export async function POST(req) {
     entityType: "user",
     entityId: userId,
   });
-
   return NextResponse.json({ success: true });
 }
