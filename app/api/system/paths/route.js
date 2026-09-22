@@ -1,3 +1,5 @@
+// path: app/api/system/paths/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -11,14 +13,10 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  try {
-    const paths = await prisma.registeredPath.findMany({
-      orderBy: [{ category: "asc" }, { label: "asc" }],
-    });
-    return NextResponse.json({ paths });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const paths = await prisma.registeredPath.findMany({
+    orderBy: [{ category: "asc" }, { label: "asc" }],
+  });
+  return NextResponse.json({ paths });
 }
 
 export async function POST(req) {
@@ -32,43 +30,35 @@ export async function POST(req) {
   if (!valid)
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
-  try {
-    const existing = await prisma.registeredPath.findFirst({
-      where: { path: body.path },
-      select: { id: true },
-    });
+  const existing = await prisma.registeredPath.findUnique({
+    where: { path: body.path },
+  });
+  if (existing)
+    return NextResponse.json(
+      { error: "This path is already registered." },
+      { status: 409 },
+    );
 
-    if (existing) {
-      return NextResponse.json(
-        { error: "This path is already registered." },
-        { status: 409 },
-      );
-    }
+  const path = await prisma.registeredPath.create({
+    data: {
+      path: body.path,
+      label: body.label,
+      icon: body.icon || null,
+      category: body.category || null,
+      module: body.module || null,
+      parent_id: body.parent_id || null,
+      is_sidebar_visible: body.is_sidebar_visible ?? true,
+      is_active: true,
+    },
+  });
 
-    const data = await prisma.registeredPath.create({
-      data: {
-        path: body.path,
-        label: body.label,
-        icon: body.icon || null,
-        category: body.category || null,
-        module: body.module || null,
-        parent_id: body.parent_id || null,
-        is_sidebar_visible: body.is_sidebar_visible ?? true,
-        is_active: true,
-      },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "path.create",
-      entityType: "path",
-      entityId: data.id,
-      afterData: data,
-    });
-
-    return NextResponse.json({ path: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "path.create",
+    entityType: "path",
+    entityId: path.id,
+    afterData: path,
+  });
+  return NextResponse.json({ path });
 }

@@ -1,3 +1,5 @@
+// path: app/api/system/departments/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -9,15 +11,10 @@ export async function GET() {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  try {
-    const data = await prisma.department.findMany({
-      orderBy: { name: "asc" },
-    });
-    return NextResponse.json({ departments: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const departments = await prisma.department.findMany({
+    orderBy: { name: "asc" },
+  });
+  return NextResponse.json({ departments });
 }
 
 export async function POST(req) {
@@ -25,43 +22,32 @@ export async function POST(req) {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  const { name, code } = await req.json();
-  if (!name || !code) {
+  const body = await req.json();
+  if (!body.name || !body.code)
     return NextResponse.json(
       { error: "Name and code are required." },
       { status: 400 },
     );
-  }
 
-  try {
-    const existing = await prisma.department.findFirst({
-      where: { code },
-      select: { id: true },
-    });
+  const existing = await prisma.department.findUnique({
+    where: { code: body.code },
+  });
+  if (existing)
+    return NextResponse.json(
+      { error: "A department with this code already exists." },
+      { status: 409 },
+    );
 
-    if (existing) {
-      return NextResponse.json(
-        { error: "A department with this code already exists." },
-        { status: 409 },
-      );
-    }
-
-    const data = await prisma.department.create({
-      data: { name, code },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "department.create",
-      entityType: "department",
-      entityId: data.id,
-      afterData: data,
-    });
-
-    return NextResponse.json({ department: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const department = await prisma.department.create({
+    data: { name: body.name, code: body.code },
+  });
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "department.create",
+    entityType: "department",
+    entityId: department.id,
+    afterData: department,
+  });
+  return NextResponse.json({ department });
 }

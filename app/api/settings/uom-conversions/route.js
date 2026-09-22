@@ -1,3 +1,5 @@
+// path: app/api/settings/uom-conversions/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -9,20 +11,19 @@ export async function GET() {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  try {
-    const data = await prisma.uomConversion.findMany({
-      orderBy: { id: "asc" },
-      include: {
-        from_uom: { select: { code: true } },
-        to_uom: { select: { code: true } },
-      },
-    });
-
-    return NextResponse.json({ conversions: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const conversions = await prisma.uomConversion.findMany({
+    include: {
+      fromUom: { select: { code: true } },
+      toUom: { select: { code: true } },
+    },
+    orderBy: { id: "asc" },
+  });
+  const mapped = conversions.map((c) => ({
+    ...c,
+    from_uom: c.fromUom,
+    to_uom: c.toUom,
+  }));
+  return NextResponse.json({ conversions: mapped });
 }
 
 export async function POST(req) {
@@ -30,7 +31,6 @@ export async function POST(req) {
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
   const body = await req.json();
   if (!body.from_uom_id || !body.to_uom_id || !body.conversion_factor) {
     return NextResponse.json(
@@ -51,41 +51,30 @@ export async function POST(req) {
     );
   }
 
-  try {
-    const existing = await prisma.uomConversion.findFirst({
-      where: {
-        from_uom_id: body.from_uom_id,
-        to_uom_id: body.to_uom_id,
-      },
-      select: { id: true },
-    });
+  const existing = await prisma.uomConversion.findFirst({
+    where: { from_uom_id: body.from_uom_id, to_uom_id: body.to_uom_id },
+  });
+  if (existing)
+    return NextResponse.json(
+      { error: "This conversion already exists." },
+      { status: 409 },
+    );
 
-    if (existing) {
-      return NextResponse.json(
-        { error: "This conversion already exists." },
-        { status: 409 },
-      );
-    }
+  const conversion = await prisma.uomConversion.create({
+    data: {
+      from_uom_id: body.from_uom_id,
+      to_uom_id: body.to_uom_id,
+      conversion_factor: body.conversion_factor,
+    },
+  });
 
-    const data = await prisma.uomConversion.create({
-      data: {
-        from_uom_id: body.from_uom_id,
-        to_uom_id: body.to_uom_id,
-        conversion_factor: parseFloat(body.conversion_factor),
-      },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "uom_conversion.create",
-      entityType: "uom_conversion",
-      entityId: data.id,
-      afterData: data,
-    });
-
-    return NextResponse.json({ conversion: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "uom_conversion.create",
+    entityType: "uom_conversion",
+    entityId: conversion.id,
+    afterData: conversion,
+  });
+  return NextResponse.json({ conversion });
 }

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 
 const MAX_SIZE_BYTES = 2 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -49,12 +50,9 @@ export async function POST(req) {
     .getPublicUrl(path);
   const imageUrl = publicUrlData.publicUrl;
 
-  const { error: dbError } = await supabaseAdmin
-    .from("master_items")
-    .update({ image_url: imageUrl })
-    .eq("id", itemId);
-  if (dbError)
-    return NextResponse.json({ error: dbError.message }, { status: 500 });
-
+  await prisma.masterItem.update({
+    where: { id: itemId },
+    data: { image_url: imageUrl },
+  });
   return NextResponse.json({ imageUrl });
 }

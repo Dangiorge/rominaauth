@@ -1,3 +1,5 @@
+// path: app/api/system/roles/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -11,32 +13,19 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  try {
-    const roles = await prisma.role.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        _count: {
-          select: {
-            users: {
-              where: { deleted_at: null },
-            },
-          },
-        },
-      },
-    });
+  const roles = await prisma.role.findMany({ orderBy: { name: "asc" } });
+  const counts = await prisma.user.groupBy({
+    by: ["role_id"],
+    where: { deleted_at: null },
+    _count: true,
+  });
+  const countMap = Object.fromEntries(counts.map((c) => [c.role_id, c._count]));
 
-    const enriched = roles.map((r) => {
-      const { _count, ...roleData } = r;
-      return {
-        ...roleData,
-        user_count: _count.users,
-      };
-    });
-
-    return NextResponse.json({ roles: enriched });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const enriched = roles.map((r) => ({
+    ...r,
+    user_count: countMap[r.id] || 0,
+  }));
+  return NextResponse.json({ roles: enriched });
 }
 
 export async function POST(req) {
@@ -47,41 +36,27 @@ export async function POST(req) {
 
   const body = await req.json();
   const { valid, errors } = validateRolePayload(body);
-  if (!valid) {
+  if (!valid)
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
-  }
 
-  try {
-    const existing = await prisma.role.findFirst({
-      where: { name: body.name },
-      select: { id: true },
-    });
+  const existing = await prisma.role.findUnique({ where: { name: body.name } });
+  if (existing)
+    return NextResponse.json(
+      { error: "A role with this name already exists." },
+      { status: 409 },
+    );
 
-    if (existing) {
-      return NextResponse.json(
-        { error: "A role with this name already exists." },
-        { status: 409 },
-      );
-    }
+  const role = await prisma.role.create({
+    data: { name: body.name, description: body.description || null },
+  });
 
-    const data = await prisma.role.create({
-      data: {
-        name: body.name,
-        description: body.description || null,
-      },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "role.create",
-      entityType: "role",
-      entityId: data.id,
-      afterData: data,
-    });
-
-    return NextResponse.json({ role: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "role.create",
+    entityType: "role",
+    entityId: role.id,
+    afterData: role,
+  });
+  return NextResponse.json({ role });
 }

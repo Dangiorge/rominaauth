@@ -3,89 +3,73 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import { validateRolePayload } from "@/lib/validation";
 import { canDeleteRole } from "@/lib/guards";
 import { logAudit } from "@/lib/audit";
 
 export async function PUT(req, { params }) {
   const { roleId } = await params;
-
+  const id = Number(roleId);
   const session = await getServerSession(authOptions);
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: before } = await supabaseAdmin
-    .from("roles")
-    .select("*")
-    .eq("id", roleId)
-    .single();
+  const before = await prisma.role.findUnique({ where: { id } });
   if (!before)
     return NextResponse.json({ error: "Role not found." }, { status: 404 });
-
-  if (before.is_system) {
+  if (before.is_system)
     return NextResponse.json(
       { error: "System roles cannot be modified." },
       { status: 409 },
     );
-  }
 
   const body = await req.json();
   const { valid, errors } = validateRolePayload(body);
   if (!valid)
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
-  const { data, error } = await supabaseAdmin
-    .from("roles")
-    .update({
+  const role = await prisma.role.update({
+    where: { id },
+    data: {
       name: body.name,
       description: body.description || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", roleId)
-    .select()
-    .single();
-
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      updated_at: new Date(),
+    },
+  });
 
   await logAudit({
     actorId: session.user.id,
     actorEmail: session.user.email,
     action: "role.update",
     entityType: "role",
-    entityId: roleId,
+    entityId: id,
     beforeData: before,
-    afterData: data,
+    afterData: role,
   });
-
-  return NextResponse.json({ role: data });
+  return NextResponse.json({ role });
 }
 
 export async function DELETE(req, { params }) {
   const { roleId } = await params;
-
+  const id = Number(roleId);
   const session = await getServerSession(authOptions);
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const guard = await canDeleteRole(roleId);
+  const guard = await canDeleteRole(id);
   if (!guard.allowed)
     return NextResponse.json({ error: guard.reason }, { status: 409 });
 
-  const { error } = await supabaseAdmin.from("roles").delete().eq("id", roleId);
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
-
+  await prisma.role.delete({ where: { id } });
   await logAudit({
     actorId: session.user.id,
     actorEmail: session.user.email,
     action: "role.delete",
     entityType: "role",
-    entityId: roleId,
+    entityId: id,
   });
-
   return NextResponse.json({ success: true });
 }

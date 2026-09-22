@@ -1,3 +1,5 @@
+// path: app/api/system/departments/[departmentId]/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -6,87 +8,63 @@ import { logAudit } from "@/lib/audit";
 
 export async function PUT(req, { params }) {
   const { departmentId } = await params;
+  const id = Number(departmentId);
   const session = await getServerSession(authOptions);
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
   const body = await req.json();
+  const before = await prisma.department.findUnique({ where: { id } });
+  if (!before)
+    return NextResponse.json(
+      { error: "Department not found." },
+      { status: 404 },
+    );
 
-  try {
-    const before = await prisma.department.findUnique({
-      where: { id: departmentId },
-    });
+  const department = await prisma.department.update({
+    where: { id },
+    data: { name: body.name, code: body.code, is_active: body.is_active },
+  });
 
-    if (!before) {
-      return NextResponse.json(
-        { error: "Department not found." },
-        { status: 404 },
-      );
-    }
-
-    const data = await prisma.department.update({
-      where: { id: departmentId },
-      data: {
-        name: body.name,
-        code: body.code,
-        is_active: body.is_active,
-        updated_at: new Date(),
-      },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "department.update",
-      entityType: "department",
-      entityId: departmentId,
-      beforeData: before,
-      afterData: data,
-    });
-
-    return NextResponse.json({ department: data });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "department.update",
+    entityType: "department",
+    entityId: id,
+    beforeData: before,
+    afterData: department,
+  });
+  return NextResponse.json({ department });
 }
 
 export async function DELETE(req, { params }) {
   const { departmentId } = await params;
+  const id = Number(departmentId);
   const session = await getServerSession(authOptions);
   if (!session || session.user.roleName !== "super_admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  try {
-    const count = await prisma.user.count({
-      where: {
-        department_id: departmentId,
-        deleted_at: null,
+  const userCount = await prisma.user.count({
+    where: { department_id: id, deleted_at: null },
+  });
+  if (userCount > 0) {
+    return NextResponse.json(
+      {
+        error: `Cannot delete: ${userCount} user(s) belong to this department.`,
       },
-    });
-
-    if (count > 0) {
-      return NextResponse.json(
-        { error: `Cannot delete: ${count} user(s) belong to this department.` },
-        { status: 409 },
-      );
-    }
-
-    await prisma.department.delete({
-      where: { id: departmentId },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorEmail: session.user.email,
-      action: "department.delete",
-      entityType: "department",
-      entityId: departmentId,
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      { status: 409 },
+    );
   }
+
+  await prisma.department.delete({ where: { id } });
+  await logAudit({
+    actorId: session.user.id,
+    actorEmail: session.user.email,
+    action: "department.delete",
+    entityType: "department",
+    entityId: id,
+  });
+  return NextResponse.json({ success: true });
 }

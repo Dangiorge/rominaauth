@@ -1,3 +1,5 @@
+// path: app/api/system/audit-logs/route.js
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -15,24 +17,25 @@ export async function GET(req) {
   const entityType = searchParams.get("entityType");
   const actorEmail = searchParams.get("actorEmail");
 
-  const where = {};
-  if (entityType) where.entity_type = entityType;
-  if (actorEmail)
-    where.actor_email = { contains: actorEmail, mode: "insensitive" };
+  const where = {
+    ...(entityType && { entity_type: entityType }),
+    ...(actorEmail && {
+      actor_email: { contains: actorEmail, mode: "insensitive" },
+    }),
+  };
 
-  try {
-    const [data, count] = await prisma.$transaction([
-      prisma.auditLog.findMany({
-        where,
-        orderBy: { created_at: "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      prisma.auditLog.count({ where }),
-    ]);
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { created_at: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.auditLog.count({ where }),
+  ]);
 
-    return NextResponse.json({ logs: data, total: count, page, pageSize });
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  // BigInt IDs can't be JSON-serialized directly — converted to Number here.
+  const serialized = logs.map((log) => ({ ...log, id: Number(log.id) }));
+
+  return NextResponse.json({ logs: serialized, total, page, pageSize });
 }

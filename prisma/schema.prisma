@@ -87,6 +87,11 @@ model User {
   createdMasterItems    MasterItem[]   @relation("MasterItemCreatedBy")
   updatedMasterItems    MasterItem[]   @relation("MasterItemUpdatedBy")
 
+  uploadedDocuments     Document[]            @relation("DocumentUploadedBy")
+  approvedDocuments     Document[]            @relation("DocumentApprovedBy")
+  documentEditRequests  DocumentEditRequest[] @relation("EditRequestRequestedBy")
+  reviewedEditRequests  DocumentEditRequest[] @relation("EditRequestReviewedBy")
+
   @@map("users")
 }
 
@@ -205,11 +210,14 @@ model Company {
   created_at       DateTime    @default(now()) @db.Timestamptz(6)
   updated_at       DateTime    @default(now()) @db.Timestamptz(6)
 
-  brands           Brand[]
-  taxClasses       TaxClass[]
-  itemCategories   ItemCategory[]
-  masterItems      MasterItem[]
-  userCompanies    UserCompany[]
+  brands                 Brand[]
+  taxClasses             TaxClass[]
+  itemCategories         ItemCategory[]
+  masterItems            MasterItem[]
+  userCompanies          UserCompany[]
+  documents              Document[]
+  documentCategories     DocumentCategory[]
+  documentAccessPolicies DocumentAccessPolicy[]
 
   @@map("companies")
 }
@@ -277,7 +285,9 @@ model Department {
   is_active  Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
 
-  users      User[]
+  users                  User[]
+  documents              Document[]
+  documentAccessPolicies DocumentAccessPolicy[]
 
   @@map("departments")
 }
@@ -475,4 +485,158 @@ model ItemBrandVisibility {
 
   @@id([item_id, brand_id])
   @@map("item_brand_visibility")
+}
+
+// ==========================================
+// CEO OFFICE DOCUMENT MANAGEMENT & GOVERNANCE
+// ==========================================
+
+model DocumentCategory {
+  id            Int               @id @default(autoincrement())
+  company_id    Int
+  name          String
+  code          String
+  description   String?
+  is_active     Boolean           @default(true)
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
+  deleted_at    DateTime?
+
+  company       Company               @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  subcategories DocumentSubCategory[]
+  documents     Document[]
+  accessPolicies DocumentAccessPolicy[]
+
+  @@unique([company_id, code])
+  @@map("document_categories")
+}
+
+model DocumentSubCategory {
+  id            Int               @id @default(autoincrement())
+  category_id   Int
+  name          String
+  code          String
+  description   String?
+  is_active     Boolean           @default(true)
+  created_at    DateTime          @default(now())
+  updated_at    DateTime          @updatedAt
+  deleted_at    DateTime?
+
+  category      DocumentCategory  @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  documents     Document[]
+
+  @@unique([category_id, code])
+  @@map("document_subcategories")
+}
+
+model Document {
+  id              String               @id @default(cuid())
+  company_id      Int
+  title           String
+  description     String?
+  
+  // LAN Storage & Tamper Detection fields
+  file_path       String               // Relative path on local LAN server storage (e.g., /uploads/ceo/2026/report.pdf)
+  file_hash       String?              // SHA-256 cryptographic hash to detect manual file tampering on the server
+  file_size       Int?                 // File size in bytes
+  mime_type       String?              // e.g., application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+  
+  // Classification & Governance Status
+  status          String               @default("PENDING_APPROVAL") // PENDING_APPROVAL, APPROVED, EDIT_UNLOCKED, REJECTED, ARCHIVED
+  category_id     Int?
+  subcategory_id  Int?
+  department_id   Int?                 // Owning/Approved Department ID
+  
+  // Audit & Ownership Tracking
+  uploaded_by     String               @db.Uuid // User ID who uploaded the file
+  approved_by     String?              @db.Uuid // Department head or Admin user ID who approved it
+  approved_at     DateTime?
+  
+  created_at      DateTime             @default(now())
+  updated_at      DateTime             @updatedAt
+  deleted_at      DateTime?
+
+  // Relations
+  company         Company              @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  category        DocumentCategory?    @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  subcategory     DocumentSubCategory? @relation(fields: [subcategory_id], references: [id], onDelete: SetNull)
+  department      Department?          @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  
+  uploader        User                 @relation("DocumentUploadedBy", fields: [uploaded_by], references: [id])
+  approver        User?                @relation("DocumentApprovedBy", fields: [approved_by], references: [id])
+
+  versions        DocumentVersion[]
+  editRequests    DocumentEditRequest[]
+  accessPolicies  DocumentAccessPolicy[]
+
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id             String      @id @default(cuid())
+  document_id    String
+  version_number Int         // Incremental number (1, 2, 3...)
+  file_path      String      // Path to the archived file binary on the LAN server
+  file_hash      String?     // SHA-256 hash for historical file version
+  change_reason  String      // Reason provided during the edit approval
+  changed_by     String      // User ID who submitted the updated file
+  created_at     DateTime    @default(now())
+
+  document       Document    @relation(fields: [document_id], references: [id], onDelete: Cascade)
+
+  @@map("document_versions")
+}
+
+model DocumentEditRequest {
+  id           String    @id @default(cuid())
+  document_id  String
+  requested_by String    @db.Uuid // User ID requesting permission to edit
+  reason       String    // Justification for the edit request
+  status       String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewed_by  String?   @db.Uuid // Admin or Department Head user ID who approved/rejected
+  reviewed_at  DateTime?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  document     Document  @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  requester    User      @relation("EditRequestRequestedBy", fields: [requested_by], references: [id])
+  reviewer     User?     @relation("EditRequestReviewedBy", fields: [reviewed_by], references: [id])
+
+  @@map("document_edit_requests")
+}
+
+model DocumentAccessPolicy {
+  id            String            @id @default(cuid())
+  company_id    Int
+  document_id   String?           // Optional: specific to one document
+  category_id   Int?              // Optional: applies to an entire category
+  department_id Int?              // Department granted access
+  role_id       Int?              // Optional: specific role/position restriction
+  access_level  String            @default("VIEW") // VIEW, MANAGE
+  created_at    DateTime          @default(now())
+
+  company       Company           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  document      Document?         @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  category      DocumentCategory? @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  department    Department?       @relation(fields: [department_id], references: [id], onDelete: Cascade)
+
+  @@map("document_access_policies")
+}
+
+// path: prisma/schema.prisma (append this model at the end of the file)
+
+model GoogleDriveConfig {
+  id                 Int       @id @default(autoincrement())
+  client_email       String
+  private_key        String    // stored encrypted, never returned plain to the client
+  project_id         String
+  shared_drive_id    String?
+  last_tested_at     DateTime? @db.Timestamptz(6)
+  last_test_success  Boolean?
+  last_test_error    String?
+  created_by         String?   @db.Uuid
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@map("google_drive_config")
 }
