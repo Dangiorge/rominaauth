@@ -4,14 +4,18 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { testDriveConnection } from "@/lib/googleDrive";
+import { testDriveConnection, extractDriveId } from "@/lib/googleDrive";
 
 function draftFromRequest(body, savedConfig) {
   const clientEmail = body.client_email?.trim();
   const projectId = body.project_id?.trim();
   const privateKey = body.private_key?.trim();
 
-  if (!clientEmail || !projectId || (!privateKey && !savedConfig?.private_key)) {
+  if (
+    !clientEmail ||
+    !projectId ||
+    (!privateKey && !savedConfig?.private_key)
+  ) {
     throw new Error(
       "Enter a service-account email, project ID, and private key before testing.",
     );
@@ -20,7 +24,7 @@ function draftFromRequest(body, savedConfig) {
   return {
     client_email: clientEmail,
     project_id: projectId,
-    shared_drive_id: body.shared_drive_id?.trim() || null,
+    shared_drive_id: extractDriveId(body.shared_drive_id?.trim()) || null,
     private_key: privateKey || savedConfig.private_key,
     privateKeyIsPlaintext: Boolean(privateKey),
   };
@@ -51,8 +55,6 @@ export async function POST(req) {
       : draftFromRequest(body, savedConfig);
     const result = await testDriveConnection(config);
 
-    // A draft test deliberately leaves the database untouched. Only a test of
-    // the saved record becomes its recorded connection health.
     if (useSavedConfig) {
       await prisma.googleDriveConfig.update({
         where: { id: savedConfig.id },
@@ -64,10 +66,16 @@ export async function POST(req) {
       });
     }
 
-    return NextResponse.json({ ...result, tested_saved_config: useSavedConfig });
+    return NextResponse.json({
+      ...result,
+      tested_saved_config: useSavedConfig,
+    });
   } catch (error) {
     return NextResponse.json(
-      { success: false, message: error.message || "Unable to test Google Drive." },
+      {
+        success: false,
+        message: error.message || "Unable to test Google Drive.",
+      },
       { status: 400 },
     );
   }

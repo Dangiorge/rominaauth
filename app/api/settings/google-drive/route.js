@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { encrypt } from "@/lib/crypto";
+import { extractDriveId } from "@/lib/googleDrive";
 import { logAudit } from "@/lib/audit";
 
 function readConfigInput(body, existing) {
@@ -22,7 +23,7 @@ function readConfigInput(body, existing) {
     client_email: clientEmail,
     project_id: projectId,
     private_key: privateKey ? encrypt(privateKey) : existing.private_key,
-    shared_drive_id: body.shared_drive_id?.trim() || null,
+    shared_drive_id: extractDriveId(body.shared_drive_id?.trim()) || null,
   };
 }
 
@@ -37,7 +38,6 @@ export async function GET() {
   });
   if (!config) return NextResponse.json({ config: null });
 
-  // Never return the private key itself — just confirm one is stored.
   const { private_key, ...safe } = config;
   return NextResponse.json({
     config: { ...safe, has_private_key: !!private_key },
