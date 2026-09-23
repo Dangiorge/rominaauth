@@ -7,6 +7,22 @@ import { prisma } from "@/lib/prisma";
 import { downloadDocumentFile } from "@/lib/documentStorage";
 import { logAudit } from "@/lib/audit";
 
+// Helper to map MIME types to correct file extensions
+function getExtensionFromMimeType(mimeType) {
+  const mimeMap = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      ".xlsx",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+  };
+  return mimeMap[mimeType] || "";
+}
+
 export async function GET(req, { params }) {
   const { documentId } = await params;
   const session = await getServerSession(authOptions);
@@ -38,10 +54,21 @@ export async function GET(req, { params }) {
     entityId: document.id,
   });
 
+  // Clean the title and construct the filename with extension
+  let filename = document.title
+    ? document.title.trim().replace(/"/g, "")
+    : "downloaded-file";
+  const extension = getExtensionFromMimeType(document.mime_type);
+
+  // Append extension automatically only if the title doesn't already have it
+  if (extension && !filename.toLowerCase().endsWith(extension.toLowerCase())) {
+    filename += extension;
+  }
+
   return new NextResponse(buffer, {
     headers: {
       "Content-Type": document.mime_type || "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${document.title.replace(/"/g, "")}"`,
+      "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
 }

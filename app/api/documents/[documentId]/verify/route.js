@@ -33,6 +33,18 @@ export async function POST(req, { params }) {
   const currentHash = hashBuffer(buffer);
   const matches = currentHash === document.file_hash;
 
+  // If the hash matches, optionally update the document status in the database
+  if (matches && document.status === "PENDING_APPROVAL") {
+    await prisma.document.update({
+      where: { id: documentId },
+      data: {
+        status: "APPROVED",
+        approved_by: session.user.id,
+        approved_at: new Date(),
+      },
+    });
+  }
+
   await logAudit({
     actorId: session.user.id,
     actorEmail: session.user.email,
