@@ -696,21 +696,20 @@ model ImportBatchRow {
   @@map("import_batch_rows")
 }
 model DocumentAccessPolicy {
-  id            String   @id @default(cuid())
+  id            String            @id @default(cuid())
   company_id    Int
-  department_id Int?     // <-- Added: Optional department scope
-  category_id   Int?     // Existing: Optional category scope
-  document_id   String?  // <-- Added: Optional specific document override
-  role_id       Int
-  access_level  String   @default("VIEW") // "VIEW", "NONE", etc.
-  permissions   Json     // Stores flags: view, submit, approve, check, view_type, etc.
-  created_at    DateTime @default(now())
+  document_id   String?           
+  category_id   Int?              
+  department_id Int?              
+  role_id       Int?              
+  access_level  String            @default("VIEW") 
+  permissions   Json              @default("{}")   // Add this line
+  created_at    DateTime          @default(now())
 
-  company       Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  category      Category?  @relation(fields: [category_id], references: [id], onDelete: Cascade)
-  department    Department? @relation(fields: [department_id], references: [id], onDelete: Cascade)
-  document      Document?  @relation(fields: [document_id], references: [id], onDelete: Cascade, map: "policy_document_fk")
-  role          Role       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  company       Company           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  document      Document?         @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  category      DocumentCategory? @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  department    Department?       @relation(fields: [department_id], references: [id], onDelete: Cascade)
 
-  @@index([company_id, department_id, category_id, document_id, role_id])
+  @@map("document_access_policies")
 }

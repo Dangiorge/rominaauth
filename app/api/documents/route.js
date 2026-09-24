@@ -21,10 +21,34 @@ export async function GET(req) {
       orderBy: { created_at: "desc" },
     });
 
+    // Check if the user is a super admin
+    const isSuperAdmin =
+      session.user.roleName === "super_admin" ||
+      session.user.role === "super_admin" ||
+      session.user.isSuperAdmin;
+
     const filteredDocs = [];
     for (const doc of allDocs) {
-      const perms = await getUserDocumentPermissions(session.user.id, doc);
-      if (perms.view) {
+      let perms;
+
+      if (isSuperAdmin) {
+        // Automatically grant full permissions to super admins
+        perms = {
+          view: true,
+          submit: true,
+          approve: true,
+          check: true,
+          request_edit: true,
+          access_level: "FULL",
+        };
+      } else {
+        perms = await getUserDocumentPermissions(
+          session.user.id,
+          doc.category_id,
+        );
+      }
+
+      if (perms?.view) {
         filteredDocs.push({
           ...doc,
           user_permissions: perms,

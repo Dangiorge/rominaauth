@@ -1,154 +1,218 @@
-// path: app/(dashboard)/documents/upload/page.jsx
+// path: app/documents/upload/page.jsx
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-export default function UploadDocumentPage() {
+export default function DocumentUploadPage() {
   const router = useRouter();
-  const [companies, setCompanies] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [subcategories, setSubcategories] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [form, setForm] = useState({
+
+  const [formData, setFormData] = useState({
     title: "",
     description: "",
-    company_id: "",
+    category_id: "",
+    subcategory_id: "",
     department_id: "",
   });
-  const [file, setFile] = useState(null);
+
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    fetch("/api/system/companies")
-      .then((r) => r.json())
-      .then((d) => {
-        setCompanies(d.companies || []);
-        if (d.companies?.length)
-          setForm((f) => ({ ...f, company_id: String(d.companies[0].id) }));
-      });
+    fetch("/api/documents/allowed-categories")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.categories) setCategories(data.categories);
+      })
+      .catch((err) => console.error("Failed to load categories", err));
+
     fetch("/api/system/departments")
-      .then((r) => r.json())
-      .then((d) => setDepartments(d.departments || []));
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.departments) setDepartments(data.departments);
+      })
+      .catch((err) => console.error("Failed to load departments", err));
   }, []);
 
-  async function handleSubmit(e) {
+  const handleCategoryChange = (e) => {
+    const catId = e.target.value;
+    setFormData({ ...formData, category_id: catId, subcategory_id: "" });
+    const selectedCat = categories.find((c) => c.id.toString() === catId);
+    setSubcategories(selectedCat ? selectedCat.subcategories : []);
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFile(file);
+    }
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedFile) {
+      setError("Please select a file to upload.");
+      return;
+    }
+
+    setLoading(true);
     setError("");
-    if (!file) {
-      setError("Please choose a file.");
-      return;
-    }
-    setUploading(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("title", form.title);
-    formData.append("description", form.description);
-    formData.append("company_id", form.company_id);
-    if (form.department_id)
-      formData.append("department_id", form.department_id);
+    try {
+      // Use FormData to send both metadata and the file binary
+      const data = new FormData();
+      data.append("file", selectedFile);
+      data.append("title", formData.title);
+      data.append("description", formData.description);
+      data.append("category_id", formData.category_id);
+      data.append("subcategory_id", formData.subcategory_id);
+      if (formData.department_id) {
+        data.append("department_id", formData.department_id);
+      }
 
-    const res = await fetch("/api/documents", {
-      method: "POST",
-      body: formData,
-    });
-    const data = await res.json();
-    setUploading(false);
-    if (!res.ok) {
-      setError(data.error);
-      return;
+      const res = await fetch("/api/documents/upload", {
+        method: "POST",
+        body: data, // Note: Do NOT set Content-Type header manually when using FormData
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to upload document");
+
+      router.push("/documents");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    router.push("/documents");
-  }
+  };
 
   return (
-    <div className="max-w-lg">
+    <div className="max-w-2xl mx-auto p-6 bg-white shadow rounded-lg mt-10">
       <h1 className="text-2xl font-bold mb-6">Upload Document</h1>
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md px-4 py-3 mb-4">
-          {error}
-        </div>
+        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">{error}</div>
       )}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white border rounded-lg p-6 space-y-4"
-      >
+
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="text-xs text-slate-500 block mb-1">Title</label>
+          <label className="block text-sm font-medium text-gray-700">
+            Title
+          </label>
           <input
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            className="w-full border rounded-md px-3 py-2"
+            type="text"
             required
+            value={formData.title}
+            onChange={(e) =>
+              setFormData({ ...formData, title: e.target.value })
+            }
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2"
           />
         </div>
+
         <div>
-          <label className="text-xs text-slate-500 block mb-1">
+          <label className="block text-sm font-medium text-gray-700">
             Description
           </label>
           <textarea
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            className="w-full border rounded-md px-3 py-2"
-            rows={2}
+            value={formData.description}
+            onChange={(e) =>
+              setFormData({ ...formData, description: e.target.value })
+            }
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2"
           />
         </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-xs text-slate-500 block mb-1">Company</label>
-            <select
-              value={form.company_id}
-              onChange={(e) => setForm({ ...form, company_id: e.target.value })}
-              className="w-full border rounded-md px-3 py-2"
-              required
-            >
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">
-              Department
+            <label className="block text-sm font-medium text-gray-700">
+              Category
             </label>
             <select
-              value={form.department_id}
-              onChange={(e) =>
-                setForm({ ...form, department_id: e.target.value })
-              }
-              className="w-full border rounded-md px-3 py-2"
+              required
+              value={formData.category_id}
+              onChange={handleCategoryChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2"
             >
-              <option value="">—</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
+              <option value="">Select Category</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Subcategory
+            </label>
+            <select
+              required
+              value={formData.subcategory_id}
+              onChange={(e) =>
+                setFormData({ ...formData, subcategory_id: e.target.value })
+              }
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2"
+            >
+              <option value="">Select Subcategory</option>
+              {subcategories.map((sub) => (
+                <option key={sub.id} value={sub.id}>
+                  {sub.name}
                 </option>
               ))}
             </select>
           </div>
         </div>
+
         <div>
-          <label className="text-xs text-slate-500 block mb-1">File</label>
+          <label className="block text-sm font-medium text-gray-700">
+            Department
+          </label>
+          <select
+            value={formData.department_id}
+            onChange={(e) =>
+              setFormData({ ...formData, department_id: e.target.value })
+            }
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2"
+          >
+            <option value="">Select Department (Optional)</option>
+            {departments.map((dept) => (
+              <option key={dept.id} value={dept.id}>
+                {dept.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">
+            Select File
+          </label>
           <input
             type="file"
-            onChange={(e) => setFile(e.target.files[0])}
-            className="w-full border rounded-md px-3 py-2"
             required
+            onChange={handleFileChange}
+            className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded-md p-1"
           />
-          <p className="text-xs text-slate-400 mt-1">
-            Max 25MB. Uploaded to Google Drive; a SHA-256 hash is recorded for
-            tamper detection.
-          </p>
+          {selectedFile && (
+            <p className="text-xs text-gray-500 mt-1">
+              Selected: {selectedFile.name} (
+              {(selectedFile.size / 1024).toFixed(2)} KB)
+            </p>
+          )}
         </div>
+
         <button
           type="submit"
-          disabled={uploading}
-          className="bg-slate-900 text-white px-6 py-2 rounded-md text-sm disabled:opacity-50"
+          disabled={loading}
+          className="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
         >
-          {uploading ? "Uploading..." : "Upload"}
+          {loading ? "Uploading..." : "Upload Document"}
         </button>
       </form>
     </div>
