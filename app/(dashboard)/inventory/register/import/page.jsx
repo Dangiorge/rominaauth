@@ -210,7 +210,7 @@ export default function InventoryImportPage() {
       )}
       <form
         onSubmit={handlePreview}
-        className="bg-white border rounded-lg p-6 space-y-4"
+        className="bg-white border line-clamp-1 rounded-lg p-6 space-y-4"
       >
         <div>
           <label className="text-xs text-slate-500 block mb-1">
