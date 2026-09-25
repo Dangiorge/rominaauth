@@ -15,7 +15,7 @@ export async function POST(req) {
   return NextResponse.json(
     {
       imageUrl: "",
-      message: "Image upload is temporarily disabled.",
+      message: "Image upload is temporarily Enabled.",
     },
     { status: 200 },
   );
