@@ -14,36 +14,41 @@ export async function GET(req) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const includeDeleted = searchParams.get("includeDeleted") === "true";
+  try {
+    const { searchParams } = new URL(req.url);
+    const includeDeleted = searchParams.get("includeDeleted") === "true";
 
-  const users = await prisma.user.findMany({
-    where: includeDeleted ? {} : { deleted_at: null },
-    select: {
-      id: true,
-      email: true,
-      full_name: true,
-      phone: true,
-      employee_id: true,
-      job_title: true,
-      status: true,
-      is_active: true,
-      last_login_at: true,
-      created_at: true,
-      deleted_at: true,
-      role_id: true,
-      role: { select: { id: true, name: true } },
-      department_ref: { select: { name: true } },
-    },
-    orderBy: { created_at: "desc" },
-  });
+    const users = await prisma.user.findMany({
+      where: includeDeleted ? {} : { deleted_at: null },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        phone: true,
+        employee_id: true,
+        job_title: true,
+        status: true,
+        is_active: true,
+        last_login_at: true,
+        created_at: true,
+        deleted_at: true,
+        role_id: true,
+        role: { select: { id: true, name: true } },
+        department_ref: { select: { name: true } },
+      },
+      orderBy: { created_at: "desc" },
+    });
 
-  const mapped = users.map((u) => ({
-    ...u,
-    role_name: u.role?.name,
-    department: u.department_ref?.name,
-  }));
-  return NextResponse.json({ users: mapped });
+    const mapped = users.map((u) => ({
+      ...u,
+      role_name: u.role?.name,
+      department: u.department_ref?.name,
+    }));
+    return NextResponse.json({ users: mapped });
+  } catch (error) {
+    console.error("Failed to fetch users:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }
 
 export async function POST(req) {
@@ -52,54 +57,62 @@ export async function POST(req) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { valid, errors } = validateUserPayload(body);
-  if (!valid)
-    return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+  try {
+    const body = await req.json();
+    const { valid, errors } = validateUserPayload(body);
+    if (!valid)
+      return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
-  const existing = await prisma.user.findUnique({
-    where: { email: body.email },
-  });
-  if (existing)
+    const existing = await prisma.user.findUnique({
+      where: { email: body.email },
+    });
+    if (existing)
+      return NextResponse.json(
+        { error: "A user with this email already exists." },
+        { status: 409 },
+      );
+
+    const password_hash = await bcrypt.hash(body.password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email: body.email,
+        password_hash,
+        full_name: body.full_name,
+        phone: body.phone || null,
+        employee_id: body.employee_id || null,
+        address: body.address || null,
+        city: body.city || null,
+        country: body.country || null,
+        date_of_birth: body.date_of_birth ? new Date(body.date_of_birth) : null,
+        gender: body.gender || null,
+        department_id: body.department_id ? parseInt(body.department_id) : null,
+        job_title: body.job_title || null,
+        hire_date: body.hire_date ? new Date(body.hire_date) : null,
+        role_id: body.role_id ? parseInt(body.role_id) : undefined,
+        status: "active",
+        is_active: true,
+        must_change_password: body.must_change_password ?? true,
+        created_by: session.user.id,
+      },
+      select: { id: true, email: true, full_name: true },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorEmail: session.user.email,
+      action: "user.create",
+      entityType: "user",
+      entityId: user.id,
+      afterData: { email: user.email, full_name: user.full_name },
+    });
+
+    return NextResponse.json({ user }, { status: 201 });
+  } catch (error) {
+    console.error("User creation error:", error);
     return NextResponse.json(
-      { error: "A user with this email already exists." },
-      { status: 409 },
+      { error: error.message || "Internal server error" },
+      { status: 500 },
     );
-
-  const password_hash = await bcrypt.hash(body.password, 10);
-
-  const user = await prisma.user.create({
-    data: {
-      email: body.email,
-      password_hash,
-      full_name: body.full_name,
-      phone: body.phone || null,
-      employee_id: body.employee_id || null,
-      address: body.address || null,
-      city: body.city || null,
-      country: body.country || null,
-      date_of_birth: body.date_of_birth ? new Date(body.date_of_birth) : null,
-      gender: body.gender || null,
-      department_id: body.department_id || null,
-      job_title: body.job_title || null,
-      hire_date: body.hire_date ? new Date(body.hire_date) : null,
-      role_id: body.role_id,
-      status: "active",
-      is_active: true,
-      must_change_password: body.must_change_password ?? true,
-      created_by: session.user.id,
-    },
-    select: { id: true, email: true, full_name: true },
-  });
-
-  await logAudit({
-    actorId: session.user.id,
-    actorEmail: session.user.email,
-    action: "user.create",
-    entityType: "user",
-    entityId: user.id,
-    afterData: { email: user.email, full_name: user.full_name },
-  });
-
-  return NextResponse.json({ user });
+  }
 }

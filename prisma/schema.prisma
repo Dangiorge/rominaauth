@@ -93,7 +93,8 @@ model User {
   reviewedEditRequests  DocumentEditRequest[] @relation("EditRequestReviewedBy")
 
   importBatches ImportBatch[]
-
+  createdGrns      Grn[]              @relation("GrnCreatedBy")
+  createdTransfers InternalTransfer[] @relation("TransferCreatedBy")
   @@map("users")
 }
 
@@ -220,7 +221,7 @@ model Company {
   documents              Document[]
   documentCategories     DocumentCategory[]
   documentAccessPolicies DocumentAccessPolicy[]
-
+  stores Store[]
   // path: prisma/schema.prisma (inside the existing Company model, add this line near the other relation arrays)
 
   inventoryItems InventoryItemRegister[]
@@ -280,7 +281,7 @@ model Branch {
   updated_at    DateTime     @default(now()) @db.Timestamptz(6)
 
   userBranches  UserBranch[]
-
+  stores Store[]
   @@map("branches")
 }
 
@@ -656,6 +657,9 @@ model InventoryItemRegister {
   deleted_at          DateTime? @db.Timestamptz(6)
 
   importBatchRows     ImportBatchRow[]
+  grnLines       GrnLine[]
+  transferLines  InternalTransferLine[]
+  stockMovements StockMovement[]
 
   @@unique([code, name])
   @@map("inventory_item_register")
@@ -712,4 +716,126 @@ model DocumentAccessPolicy {
   department    Department?       @relation(fields: [department_id], references: [id], onDelete: Cascade)
 
   @@map("document_access_policies")
+}
+
+// path: prisma/schema.prisma (append to the end of the file)
+
+enum StoreGrade {
+  MAIN // Grade 1 — creates GRNs, receives directly from suppliers
+  SUB  // Grade 2 — receives only via Internal Transfer from a Main Store
+}
+
+enum StockMovementType {
+  GRN_RECEIPT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+// path: prisma/schema.prisma (replace the existing Store model)
+
+model Store {
+  id          Int        @id @default(autoincrement())
+  branch_id   Int?
+  branch      Branch?    @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  company_id  Int?
+  company     Company?   @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  name        String
+  code        String     @unique
+  grade       StoreGrade
+  description String?
+  is_active   Boolean    @default(true)
+  created_by  String?    @db.Uuid
+  updated_by  String?    @db.Uuid
+  created_at  DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime   @default(now()) @db.Timestamptz(6)
+  deleted_at  DateTime?  @db.Timestamptz(6)
+
+  grns           Grn[]
+  transfersOut   InternalTransfer[] @relation("TransferFromStore")
+  transfersIn    InternalTransfer[] @relation("TransferToStore")
+  stockMovements StockMovement[]
+
+  @@map("stores")
+}
+
+model Grn {
+  id             Int      @id @default(autoincrement())
+  grn_number     String   @unique
+  store_id       Int
+  store          Store    @relation(fields: [store_id], references: [id])
+  supplier_name  String?
+  reference_note String?
+  received_date  DateTime @db.Date
+  remarks        String?
+  created_by     String   @db.Uuid
+  creator        User     @relation("GrnCreatedBy", fields: [created_by], references: [id])
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  lines GrnLine[]
+
+  @@map("grns")
+}
+
+model GrnLine {
+  id                Int                   @id @default(autoincrement())
+  grn_id            Int
+  grn               Grn                   @relation(fields: [grn_id], references: [id], onDelete: Cascade)
+  inventory_item_id Int
+  inventoryItem     InventoryItemRegister @relation(fields: [inventory_item_id], references: [id])
+  quantity          Decimal               @db.Decimal(14, 4)
+  uom               String?
+  unit_cost         Decimal?              @db.Decimal(14, 4)
+  remarks           String?
+
+  @@map("grn_lines")
+}
+
+model InternalTransfer {
+  id              Int      @id @default(autoincrement())
+  transfer_number String   @unique
+  from_store_id   Int
+  fromStore       Store    @relation("TransferFromStore", fields: [from_store_id], references: [id])
+  to_store_id     Int
+  toStore         Store    @relation("TransferToStore", fields: [to_store_id], references: [id])
+  transfer_date   DateTime @db.Date
+  remarks         String?
+  created_by      String   @db.Uuid
+  creator         User     @relation("TransferCreatedBy", fields: [created_by], references: [id])
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  lines InternalTransferLine[]
+
+  @@map("internal_transfers")
+}
+
+model InternalTransferLine {
+  id                Int                   @id @default(autoincrement())
+  transfer_id       Int
+  transfer          InternalTransfer      @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  inventory_item_id Int
+  inventoryItem     InventoryItemRegister @relation(fields: [inventory_item_id], references: [id])
+  quantity          Decimal               @db.Decimal(14, 4)
+  uom               String?
+  remarks           String?
+
+  @@map("internal_transfer_lines")
+}
+
+model StockMovement {
+  id                BigInt                @id @default(autoincrement())
+  store_id          Int
+  store             Store                 @relation(fields: [store_id], references: [id])
+  inventory_item_id Int
+  inventoryItem     InventoryItemRegister @relation(fields: [inventory_item_id], references: [id])
+  movement_type     StockMovementType
+  quantity          Decimal               @db.Decimal(14, 4) // always positive; direction implied by movement_type
+  uom               String?
+  unit_cost         Decimal?              @db.Decimal(14, 4)
+  reference_type    String                // 'GRN' | 'TRANSFER'
+  reference_id      Int
+  occurred_at       DateTime              @db.Date
+  created_by        String                @db.Uuid
+  created_at        DateTime              @default(now()) @db.Timestamptz(6)
+
+  @@map("stock_movements")
 }

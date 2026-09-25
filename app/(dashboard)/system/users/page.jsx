@@ -38,28 +38,37 @@ export default function UsersPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    const res = await fetch("/api/system/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
-      return;
+
+    try {
+      const res = await fetch("/api/system/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      const responseText = await res.text();
+      const data = responseText ? JSON.parse(responseText) : {};
+
+      if (!res.ok) {
+        setError(data.error || "Failed to create user.");
+        return;
+      }
+
+      setForm({
+        email: "",
+        password: "",
+        full_name: "",
+        phone: "",
+        employee_id: "",
+        department: "",
+        job_title: "",
+        role_id: "",
+      });
+      setShowForm(false);
+      loadUsers();
+    } catch (err) {
+      setError(err.message || "An unexpected error occurred.");
     }
-    setForm({
-      email: "",
-      password: "",
-      full_name: "",
-      phone: "",
-      employee_id: "",
-      department: "",
-      job_title: "",
-      role_id: "",
-    });
-    setShowForm(false);
-    loadUsers();
   }
 
   async function handleToggleActive(user) {
@@ -69,7 +78,8 @@ export default function UsersPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: !user.is_active }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
     if (!res.ok) {
       setError(data.error);
       return;
@@ -86,7 +96,8 @@ export default function UsersPage() {
     const res = await fetch(`/api/system/users/${user.id}`, {
       method: "DELETE",
     });
-    const data = await res.json();
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
     if (!res.ok) {
       setError(data.error);
       return;
